@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "豆瓣封面墙",
+  "version": "1.8.0",
+  "description": "把豆瓣豆列或作者全部作品排成封面墙或主题书架，并导出为 PNG。",
+  "permissions": ["storage", "declarativeNetRequestWithHostAccess"],
+  "host_permissions": [
+    "https://www.douban.com/*",
+    "https://book.douban.com/*",
+    "https://*.doubanio.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "douban_cover_referer",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "action": {
+    "default_title": "生成豆瓣封面墙"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.douban.com/doulist/*",
+        "https://www.douban.com/personage/*/creations*"
+      ],
+      "css": ["content.css"],
+      "js": ["workspace-core.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
