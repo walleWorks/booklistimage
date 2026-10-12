@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="书单图片 Chrome 扩展的隐私政策与数据使用说明。">
+  <title>隐私政策 · 书单图片</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; background: #f6f7f9; color: #20242a; font: 16px/1.8 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    main { box-sizing: border-box; max-width: 800px; margin: 48px auto; padding: 48px 56px; background: #fff; border-radius: 16px; box-shadow: 0 8px 32px #20242a0a; }
+    h1 { margin: 0; font-size: 2rem; line-height: 1.3; }
+    h2 { margin-top: 2.2rem; font-size: 1.35rem; line-height: 1.4; }
+    p, li { margin: .8rem 0; }
+    ul { padding-left: 1.5rem; }
+    .date { color: #667085; }
+    a { color: #1769aa; }
+    code { padding: .1em .3em; border-radius: 4px; background: #f1f3f5; font-size: .92em; }
+    @media (max-width: 600px) { body { background: #fff; } main { margin: 0; padding: 28px 22px; border-radius: 0; box-shadow: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>书单图片隐私政策</h1>
+    <p class="date">更新日期：2026 年 10 月 9 日</p>
+    <p>“书单图片”是一款在浏览器中制作书单图片的扩展。它可读取用户正在访问的受支持豆瓣和 Five Books 页面中的书名、作者、封面链接及书单信息，并允许用户自行添加书目、上传封面、编辑标题与导出图片。</p>
+
+    <h2>数据的使用与保存</h2>
+    <ul>
+      <li>书单内容、选择顺序、图片标题和排版设置仅用于生成与编辑书单图片，保存在当前浏览器的扩展本地存储中。</li>
+      <li>用户上传的封面经浏览器处理后保存在当前浏览器的扩展本地封面库中。</li>
+      <li>扩展可能向用户当前访问的豆瓣或 Five Books 网站请求书单分页与封面图片，以完成书目收集、预览和导出。豆瓣分页请求沿用用户在豆瓣的浏览器会话；封面图片请求不附带浏览器登录凭据。</li>
+      <li>导出的 PNG 图片由浏览器保存到用户选择或默认的下载位置。</li>
+    </ul>
+    <p>本扩展不提供账号系统或云同步，不向开发者运营的服务器上传书单、封面、浏览记录或个人信息，不用于广告投放，也不出售用户数据。上述请求会发送到对应的原始网站；这些网站对请求的处理受其各自隐私政策约束。</p>
+
+    <h2>权限说明</h2>
+    <ul>
+      <li><code>storage</code>：在本机保存书单草稿和编辑设置。</li>
+      <li>豆瓣、豆瓣图片域名及 Five Books 的网站访问权限：仅在这些站点读取相关书目内容，并获取用户所选书目的封面。</li>
+      <li><code>declarativeNetRequestWithHostAccess</code>：为部分豆瓣封面请求设置其要求的来源页标头，以便正常显示封面。</li>
+    </ul>
+    <p>扩展不在其他网站注入书单按钮，不下载或执行远程代码。</p>
+
+    <h2>保留、删除与联系</h2>
+    <p>数据保留在安装该扩展的浏览器中，直到用户在扩展内更改内容、清除扩展数据或卸载扩展。卸载或清除扩展数据会删除本地草稿和上传的封面；已经导出的 PNG 文件需由用户自行删除。</p>
+    <p>如有隐私问题，可通过 <a href="https://github.com/walleWorks/booklistimage/issues">项目问题反馈页</a> 联系开发者。</p>
+    <p>本扩展对从 Chrome 浏览器 API 获得的数据的使用遵守 Chrome Web Store 用户数据政策，包括 Limited Use 限制。The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy, including the Limited Use requirements.</p>
+  </main>
+</body>
+</html>

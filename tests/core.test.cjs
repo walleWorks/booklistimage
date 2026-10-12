@@ -8,7 +8,7 @@ function setup(url='https://www.douban.com/personage/1/creations?type=writer') {
   const stored={}; const calls=[]; const label={textContent:''};
   const context = new Proxy({},{get(target,key){if(key==='createLinearGradient'||key==='createRadialGradient') return ()=>({addColorStop(){}});if(key==='measureText')return text=>({width:text.length*12});return target[key]||((...args)=>{calls.push([key,...args]);});},set(t,k,v){t[k]=v;return true;}});
   const env={window:{},location:new URL(url),URL,setTimeout,clearTimeout,document:{querySelector:()=>null,createElement:()=>({getContext:()=>context})},chrome:{runtime:{onMessage:{addListener(){}}},storage:{local:{async set(values){Object.assign(stored,values);}}}}};
-  const instrumented=source.replace('  injectLauncher();','').replace(/\}\)\(\);\s*$/, 'globalThis.api={state,DEFAULT_SETTINGS,buildExportPlan,drawWall,pageTitle,draftKey,mergeDraftBooks,flushDraft,isDraftBook,preserveCurrentProject};})();');
+  const instrumented=source.replace('  injectLauncher();','').replace(/\}\)\(\);\s*$/, 'globalThis.api={state,DEFAULT_SETTINGS,buildExportPlan,drawWall,pageTitle,draftKey,mergeDraftBooks,flushDraft,isDraftBook,parseFiveBooksRecommendations,bestSrcsetUrl,canonicalFiveBooksBookUrl};})();');
   vm.createContext(env);vm.runInContext(instrumented,env);
   env.document.querySelector=()=>label;
   return {api:env.api,stored,calls,label,env};
@@ -37,6 +37,36 @@ test('draft keys ignore pagination and sorting but isolate authors and roles',()
   assert.equal(key('https://www.douban.com/personage/1/creations?type=writer&start=20'),key('https://www.douban.com/personage/1/creations/?sortby=time&type=writer'));
   assert.notEqual(key('https://www.douban.com/personage/1/creations'),key('https://www.douban.com/personage/2/creations'));
   assert.notEqual(key('https://www.douban.com/personage/1/creations?type=writer'),key('https://www.douban.com/personage/1/creations?type=translator'));
+});
+test('Five Books people pages collect only expert recommendations and prefer the largest WebP cover',()=>{
+  const {api}=setup('https://fivebooks.com/people/steven-pinker/');
+  const attrs={
+    'data-book-id':'60710',
+    href:'https://fivebooks.com/book/the-internationalists-hathaway-shapiro/buy'
+  };
+  const item={
+    getAttribute:name=>attrs[name]||null,
+    querySelector(selector){
+      if(selector==='.book-title .title')return {textContent:'The Internationalists'};
+      if(selector.includes('a[href*="/book/"]'))return {getAttribute:name=>attrs[name]||null};
+      if(selector.includes('source[type="image/webp"]'))return {getAttribute:name=>name==='data-srcset'
+        ? 'https://fivebooks.com/images/small/cover.jpg@webp 117w, https://fivebooks.com/images/large/cover.jpg@webp 234w'
+        : null};
+      if(selector.includes('img'))return {getAttribute:()=> 'data:image/gif;base64,placeholder'};
+      return null;
+    }
+  };
+  const section={querySelectorAll:selector=>selector==='li.single-book'?[item]:[]};
+  const irrelevant={textContent:'Interviews where books by Steven Pinker were recommended',closest:()=>section,parentElement:section};
+  const recommendations={textContent:'Interviews with Steven Pinker',closest:()=>section,parentElement:section};
+  const doc={querySelectorAll:selector=>selector==='h3.block-heading'?[irrelevant,recommendations]:[]};
+  const books=api.parseFiveBooksRecommendations(doc);
+  assert.equal(books.length,1);
+  assert.equal(books[0].key,'fivebooks:60710');
+  assert.equal(books[0].title,'The Internationalists');
+  assert.equal(books[0].subjectUrl,'https://fivebooks.com/book/the-internationalists-hathaway-shapiro/');
+  assert.equal(books[0].coverUrl,'https://fivebooks.com/images/large/cover.jpg@webp');
+  assert.equal(api.bestSrcsetUrl('small.webp 1x, large.webp 2x'),'large.webp');
 });
 test('refresh preserves draft ordering, deselection and missing entries, appends new books',()=>{
   const {api}=setup();
@@ -100,11 +130,42 @@ test('uploaded covers survive source refresh and draft validation allows title-o
   assert.ok(api.isDraftBook({...book,coverUrl:''}));assert.ok(api.isDraftBook(book));
 });
 
-test('failed storage prevents switching away from current work',async()=>{
+test('failed draft storage reports failure without discarding work',async()=>{
   const {api,env,label}=setup();api.state.loaded=true;api.state.projectId='current-project';
   api.state.books=[{key:'a',title:'A',included:true,coverUrl:''}];
   env.chrome.storage.local.set=async()=>{throw new Error('QuotaExceededError');};
-  await assert.rejects(()=>api.preserveCurrentProject(),/已取消切换/);
+  assert.equal(await api.flushDraft(),false);
   assert.equal(api.state.projectId,'current-project');assert.equal(api.state.books.length,1);
   assert.match(label.textContent,/未保存/);
+});
+
+test('X defaults to 16:9 and Xiaohongshu height adapts safely to the layout',()=>{
+  const {api}=setup();
+  assert.deepEqual(Object.keys(workspace.SHARE_PRESETS),['xiaohongshu','x']);
+  assert.equal(workspace.shareSettings(0,api.DEFAULT_SETTINGS,api.buildExportPlan).sharePreset,'x');
+  assert.equal(workspace.shareSettings(5,{...api.DEFAULT_SETTINGS,sharePreset:'wechat'},api.buildExportPlan).sharePreset,'x');
+  for(const [sharePreset,preset] of Object.entries(workspace.SHARE_PRESETS)) {
+    for(const count of [0,1,2,3,4,5,7,11,12,13,23,49,100,501,2000]) {
+      const settings=workspace.shareSettings(count,{...api.DEFAULT_SETTINGS,sharePreset},api.buildExportPlan);
+      const plan=api.buildExportPlan(count,settings);
+      assert.ok(plan.safe,`${sharePreset} ${count}`);
+      assert.equal(plan.pageCounts.reduce((a,b)=>a+b,0),count);
+      if(count===5)assert.equal(plan.pageCounts.length,1,`${sharePreset}: five-book interviews should fit on one image`);
+      assert.ok(plan.pageCounts.every(n=>n<=12));
+      for(const layout of plan.layouts){
+        assert.equal(layout.width,preset.width);
+        if(sharePreset==='xiaohongshu'){
+          assert.ok(layout.height>=preset.minHeight&&layout.height<=preset.maxHeight);
+          assert.ok(layout.height>layout.width);
+        }else assert.equal(layout.height,preset.height);
+        assert.ok(layout.naturalHeight<=layout.height);
+      }
+    }
+  }
+  const xhsHeight=count=>{
+    const settings=workspace.shareSettings(count,{...api.DEFAULT_SETTINGS,sharePreset:'xiaohongshu'},api.buildExportPlan);
+    return api.buildExportPlan(count,settings).layouts[0].height;
+  };
+  assert.notEqual(xhsHeight(1),xhsHeight(5));
+  assert.notEqual(xhsHeight(5),xhsHeight(10));
 });

@@ -72,7 +72,38 @@
     return best || null;
   }
 
-  const api = {parseDelimited,parseBookList,recommendLayout};
+  // Editorial presets, not platform upload restrictions.
+  const SHARE_PRESETS = {
+    xiaohongshu: {label:'小红书',ratioLabel:'竖图 · 高度自适应',width:1200,minHeight:1500,maxHeight:2400,pageFormat:'xhs'},
+    x: {label:'X',ratioLabel:'横图 · 16:9',width:1600,height:900,pageFormat:'landscape'}
+  };
+
+  function shareSettings(count, previous, buildPlan) {
+    const sharePreset=Object.hasOwn(SHARE_PRESETS,previous.sharePreset)?previous.sharePreset:'x';
+    const preset=SHARE_PRESETS[sharePreset];
+    const base={...previous,sharePreset,width:preset.width,pageFormat:preset.pageFormat,
+      theme:'cover',fit:'contain',shadow:'none',structure:'open',alignment:'center',margin:'spacious',
+      ratio:'2:3',gap:Math.round(preset.width*.018),exportMode:'auto',titleMode:'top',
+      background:['#ffffff','#f5f2eb','#e9eef2'].includes(previous.background)?previous.background:'#ffffff'};
+    const items=Math.max(1,count),target=Math.min(items,12);
+    const ideal=Math.sqrt(target*1.5/((preset.height||preset.minHeight)/preset.width));
+    let best;
+    for(let columns=1;columns<=8;columns++) {
+      const plan=buildPlan(items,{...base,columns,booksPerPage:0});
+      if(!plan.safe)continue;
+      const capacity=Math.min(plan.pageCounts[0],Math.max(columns,Math.floor(12/columns)*columns));
+      const pages=Math.ceil(items/capacity);
+      const remainder=items%capacity;
+      const score=Math.abs(columns-ideal)+(remainder&&remainder<columns?.25:0);
+      if(!best||pages<best.pages||(pages===best.pages&&score<best.score))best={columns,booksPerPage:capacity,pages,score};
+    }
+    const capacity=best?.booksPerPage||8;
+    const pages=best?.pages||Math.ceil(items/capacity);
+    // Distribute short final pages rather than leaving a single orphaned book.
+    return {...base,columns:best?.columns||8,booksPerPage:Math.ceil(items/pages)};
+  }
+
+  const api = {parseDelimited,parseBookList,recommendLayout,SHARE_PRESETS,shareSettings};
   if (typeof module !== 'undefined') module.exports = api;
   else globalThis.DCWWorkspace = api;
 })();

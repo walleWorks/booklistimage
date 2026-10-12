@@ -17,8 +17,11 @@ chrome.action.onClicked.addListener((tab) => {
 function isSupportedPage(rawUrl) {
   try {
     const url = new URL(rawUrl);
-    return url.protocol === "https:"
-      && url.hostname === "www.douban.com"
+    if (url.protocol !== "https:") return false;
+    if (/^(?:www\.)?fivebooks\.com$/i.test(url.hostname)) {
+      return /^\/people\/[^/]+\/?$/.test(url.pathname);
+    }
+    return url.hostname === "www.douban.com"
       && (/^\/doulist\/\d+\/?$/.test(url.pathname)
         || /^\/personage\/\d+\/creations\/?$/.test(url.pathname));
   } catch {
@@ -145,7 +148,9 @@ async function downloadImage(rawUrl, signal) {
     url.protocol === "https:" &&
     (url.hostname === "douban.com" ||
       url.hostname.endsWith(".douban.com") ||
-      url.hostname.endsWith(".doubanio.com"));
+      url.hostname.endsWith(".doubanio.com") ||
+      url.hostname === "fivebooks.com" ||
+      url.hostname.endsWith(".fivebooks.com"));
 
   if (!allowed) {
     throw new Error("不支持的图片地址");

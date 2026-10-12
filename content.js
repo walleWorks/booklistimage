@@ -12,7 +12,7 @@
     ratio: "2:3",
     fit: "cover",
     width: 1500,
-    background: "#f5f2eb",
+    background: "#ffffff",
     theme: "cover",
     shadow: "soft",
     structure: "open",
@@ -35,33 +35,11 @@
     square: 1,
     portrait: 5 / 4,
     story: 16 / 9,
-    landscape: 9 / 16
+    landscape: 9 / 16,
+    xhs: null,
+    wechatCover: 100 / 235
   };
 
-  const STYLE_PRESETS = {
-    compact: {
-      theme: "cover", columns: 6, gap: 0, ratio: "2:3", fit: "cover",
-      shadow: "none", structure: "open", alignment: "left", margin: "compact",
-      titleMode: "none"
-    },
-    oak: {
-      theme: "oak", columns: 5, gap: 6, ratio: "2:3", fit: "cover",
-      shadow: "soft", structure: "open", alignment: "center", margin: "comfortable",
-      titleMode: "plaque"
-    },
-    gallery: {
-      theme: "nordic", columns: 5, gap: 10, ratio: "2:3", fit: "contain",
-      shadow: "soft", structure: "floating", alignment: "center", margin: "spacious",
-      titleMode: "top"
-    },
-    collector: {
-      theme: "walnut", columns: 4, gap: 8, ratio: "2:3", fit: "cover",
-      shadow: "strong", structure: "cubby", alignment: "center", margin: "comfortable",
-      titleMode: "plaque"
-    }
-  };
-
-  const THEME_IDS = ["cover", "oak", "walnut", "nordic", "vintage"];
   const SHELF_THEMES = {
     oak: {
       backTop: "#f2e8d7",
@@ -102,23 +80,52 @@
   };
 
   const IS_EDITOR = document.body?.dataset.dcwEditor === "true";
-  const PAGE_KIND = /^\/personage\/\d+\/creations\/?$/.test(location.pathname)
-    ? "author"
-    : "doulist";
-  const PAGE_COPY = PAGE_KIND === "author"
+  const FIVEBOOKS_HOST = /^(?:www\.)?fivebooks\.com$/i.test(location.hostname);
+  const PAGE_KIND = FIVEBOOKS_HOST && /^\/people\/[^/]+\/?$/.test(location.pathname)
+    ? "fivebooks"
+    : FIVEBOOKS_HOST && /^\/(?:category|books)\/.+/.test(location.pathname)
+      ? "fivebooks-archive"
+    : /^\/personage\/\d+\/creations\/?$/.test(location.pathname)
+      ? "author"
+      : "doulist";
+  const IS_FIVEBOOKS = PAGE_KIND === "fivebooks" || PAGE_KIND === "fivebooks-archive";
+  const FIVEBOOKS_SOURCES = {
+    authored: {
+      titleSuffix: "著作书单",
+      sourceName: "Five Books 人物著作",
+      emptyHint: "请确认该人物页列出了作者著作",
+      refreshLabel: "更新作者著作"
+    },
+    recommended: {
+      titleSuffix: "推荐书单",
+      sourceName: "Five Books 专家推荐",
+      emptyHint: "请确认该人物页包含“Interviews with …”推荐书单",
+      refreshLabel: "更新本人推荐"
+    }
+  };
+  const PAGE_COPY = IS_FIVEBOOKS
+    ? {
+        fallbackTitle: PAGE_KIND === "fivebooks-archive" ? "Five Books 专题书单" : "Five Books 推荐书单",
+        launcherTitle: "制作 Five Books 书单图片",
+        itemName: "本书",
+        ...FIVEBOOKS_SOURCES.recommended
+      }
+    : PAGE_KIND === "author"
     ? {
         fallbackTitle: "作者作品",
         launcherTitle: "把这个作者的全部作品做成封面墙",
         sourceName: "作者全部作品",
         itemName: "部作品",
-        emptyHint: "请确认这是公开的豆瓣作者作品页"
+        emptyHint: "请确认这是公开的豆瓣作者作品页",
+        refreshLabel: "更新豆瓣作品"
       }
     : {
         fallbackTitle: "豆列",
         launcherTitle: "把这个豆列做成封面墙",
         sourceName: "豆列",
         itemName: "本书",
-        emptyHint: "请确认这是包含图书的公开豆列"
+        emptyHint: "请确认这是包含图书的公开豆列",
+        refreshLabel: "更新豆瓣作品"
       };
 
   const state = {
@@ -131,7 +138,7 @@
     exportJob: null,
     viewQuery: "",
     viewFilter: "all",
-    workspaceView: "organize",
+    workspaceView: "preview",
     previewPage: 0,
     previewRevision: 0,
     previewTimer: null,
@@ -144,6 +151,7 @@
     historyGroup: null,
     importing: false,
     replaceCoverKey: null,
+    sourceMode: "recommended",
     title: readPageTitle()
   };
 
@@ -151,17 +159,31 @@
   if (IS_EDITOR) openBuilder();
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "DCW_OPEN") {
-      openBuilder();
+      openBuilder(PAGE_KIND === "fivebooks-archive" && state.sourceMode === "recommended"
+        ? fiveBooksFirstArchiveMode() : state.sourceMode);
     }
   });
 
   function injectLauncher() {
-    if (document.getElementById("dcw-launcher")) {
+    if (PAGE_KIND === "fivebooks") {
+      injectFiveBooksProfileButton();
+      injectFiveBooksSectionButtons();
+      injectFiveBooksInterviewButtons();
+      return;
+    }
+    if (PAGE_KIND === "fivebooks-archive") {
+      injectFiveBooksInterviewButtons();
+      const container = document.querySelector(".infinite-container");
+      if (container) new MutationObserver(() => injectFiveBooksInterviewButtons())
+        .observe(container, { childList: true });
       return;
     }
 
+    if (document.getElementById("dcw-launcher")) return;
+
     const button = document.createElement("button");
     button.id = "dcw-launcher";
+    button.className = "dcw-launcher";
     button.type = "button";
     button.title = PAGE_COPY.launcherTitle;
     button.innerHTML = `
@@ -171,22 +193,138 @@
         <rect x="3" y="14" width="7" height="7" rx="1.2" fill="currentColor" opacity=".78"></rect>
         <rect x="14" y="14" width="7" height="7" rx="1.2" fill="currentColor"></rect>
       </svg>
-      <span>生成封面墙</span>
+      <span>制作书单图片</span>
     `;
-    button.addEventListener("click", openBuilder);
+    button.addEventListener("click", () => openBuilder());
     document.body.appendChild(button);
   }
 
-  async function openBuilder() {
+  function injectFiveBooksProfileButton() {
+    const heading = document.querySelector(".page-content.people h1");
+    const biography = heading?.parentElement?.querySelector(":scope > p");
+    if (!biography || heading.parentElement.querySelector(".dcw-fivebooks-profile-button")) return;
+    const name = heading.textContent.replace(/^Books by\s+/i, "").trim();
+    if (!name) return;
+    const actions = document.createElement("div");
+    actions.className = "dcw-fivebooks-profile-actions";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "dcw-fivebooks-profile-button";
+    button.dataset.sourceMode = "authored";
+    button.textContent = `${name} 的书`;
+    button.setAttribute("aria-label", `制作 ${name} 的著作书单图片`);
+    button.addEventListener("click", () => openBuilder("authored"));
+    actions.appendChild(button);
+    biography.insertAdjacentElement("afterend", actions);
+  }
+
+  function injectFiveBooksSectionButtons() {
+    const headings = Array.from(document.querySelectorAll("h3.block-heading"));
+    for (const [mode, pattern] of [["authored", /^Books by\b/i], ["recommended", /^Interviews? with\b/i]]) {
+      const heading = headings.find((candidate) => pattern.test(candidate.textContent.trim()));
+      if (!heading || heading.querySelector(".dcw-fivebooks-section-button")) continue;
+      const label = document.createElement("span");
+      label.textContent = heading.textContent.trim();
+      const button = document.createElement("button");
+      button.type = "button";
+      if (mode === "recommended") button.id = "dcw-launcher";
+      button.className = "dcw-fivebooks-section-button";
+      button.dataset.sourceMode = mode;
+      const name = label.textContent.replace(mode === "authored" ? /^Books by\s+/i : /^Interviews? with\s+/i, "").trim();
+      const interviews = mode === "recommended"
+        ? Array.from(heading.parentElement.querySelectorAll(":scope > article.archive-interview")) : [];
+      const topic = interviews.length === 1 ? fiveBooksInterviewInfo(interviews[0]).topic : "";
+      button.textContent = mode === "authored" ? `${name} 的书`
+        : `${name} 推荐${topic ? `（${topic}）` : ""}`;
+      button.addEventListener("click", () => openBuilder(mode));
+      heading.classList.add("dcw-fivebooks-section-heading");
+      heading.replaceChildren(label, button);
+    }
+  }
+
+  function fiveBooksOtherInterviews(doc = document) {
+    if (PAGE_KIND === "fivebooks-archive") {
+      return Array.from(doc.querySelectorAll("article.archive-interview[id]"));
+    }
+    const heading = Array.from(doc.querySelectorAll("h3.block-heading"))
+      .find((candidate) => /^Interviews where books by\b/i.test(candidate.textContent.trim()));
+    return heading ? Array.from(heading.parentElement.querySelectorAll(":scope > article.archive-interview")) : [];
+  }
+
+  function fiveBooksInterview(sourceMode, doc = document) {
+    const id = /^interview:(\d+)$/.exec(sourceMode)?.[1];
+    return id ? fiveBooksOtherInterviews(doc).find((article) => article.id === id) : null;
+  }
+
+  function fiveBooksFirstArchiveMode() {
+    const id = fiveBooksOtherInterviews()[0]?.id;
+    return id ? `interview:${id}` : "recommended";
+  }
+
+  function fiveBooksInterviewInfo(article) {
+    const heading = article?.querySelector("section.book-list h3.interview-title");
+    const text = heading?.querySelector("a")?.textContent.replace(/\s+/g, " ").trim() || "";
+    const name = text.match(/,\s*recommended by\s+(.+)$/i)?.[1]
+      || text.match(/^(.+?)\s+on\s+.+$/i)?.[1]
+      || "";
+    const topic = heading?.querySelector(".subject")?.textContent.trim()
+      || text.replace(/,\s*recommended by\s+.+$/i, "").replace(/^The best books on\s+/i, "").trim();
+    const label = name ? `${name} 推荐${topic ? `（${topic}）` : ""}` : `${topic || text} 书单`;
+    const title = name ? (topic ? `${name} 推荐书单 · ${topic}` : `${name} 推荐书单`)
+      : `${topic || text} 书单`;
+    return { name, topic, label, title };
+  }
+
+  function fiveBooksSourceCopy(sourceMode) {
+    if (FIVEBOOKS_SOURCES[sourceMode]) return FIVEBOOKS_SOURCES[sourceMode];
+    const { name, topic } = fiveBooksInterviewInfo(fiveBooksInterview(sourceMode));
+    return {
+      sourceName: name ? `${name} 推荐书单` : `${topic} 书单`,
+      emptyHint: "请确认该访谈仍列有推荐图书",
+      refreshLabel: name ? `更新 ${name} 的书单` : `更新 ${topic} 书单`
+    };
+  }
+
+  function injectFiveBooksInterviewButtons() {
+    for (const article of fiveBooksOtherInterviews()) {
+      if (!/^\d+$/.test(article.id)) continue;
+      const sourceMode = `interview:${article.id}`;
+      const { label } = fiveBooksInterviewInfo(article);
+      for (const heading of article.querySelectorAll("h3.interview-title")) {
+        if (heading.querySelector(".dcw-fivebooks-interview-button")) continue;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "dcw-fivebooks-interview-button";
+        button.dataset.sourceMode = sourceMode;
+        button.textContent = label;
+        button.setAttribute("aria-label", `制作 ${label}的图片`);
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openBuilder(sourceMode);
+        });
+        heading.classList.add("dcw-fivebooks-interview-heading");
+        heading.appendChild(button);
+      }
+    }
+  }
+
+  async function openBuilder(sourceMode = "recommended") {
     let overlay = document.getElementById("dcw-overlay");
     if (!overlay) {
+      if (IS_FIVEBOOKS) {
+        state.sourceMode = sourceMode;
+        Object.assign(PAGE_COPY, fiveBooksSourceCopy(sourceMode));
+        state.title = readPageTitle(sourceMode);
+      }
       overlay = createBuilder();
       document.body.appendChild(overlay);
       bindBuilderEvents(overlay);
       await restoreSettings(overlay);
-    } else {
-      overlay.hidden = false;
+    } else if (IS_FIVEBOOKS && sourceMode !== state.sourceMode) {
+      await switchFiveBooksSource(sourceMode, overlay);
     }
+    overlay.hidden = false;
 
     document.documentElement.style.overflow = "hidden";
 
@@ -198,372 +336,106 @@
     }
   }
 
+  async function switchFiveBooksSource(sourceMode, overlay) {
+    if (state.exportJob || state.loading || state.importing) {
+      showToast("当前书单正在处理，请稍后切换");
+      return;
+    }
+    await flushDraft();
+    invalidatePreview();
+    state.sourceMode = sourceMode;
+    Object.assign(PAGE_COPY, fiveBooksSourceCopy(sourceMode));
+    state.books = [];
+    state.settings = { ...DEFAULT_SETTINGS };
+    state.loaded = false;
+    state.title = readPageTitle(sourceMode);
+    state.undo = [];
+    state.redo = [];
+    state.historyGroup = null;
+    state.viewQuery = "";
+    state.viewFilter = "all";
+    state.previewPage = 0;
+    overlay.querySelector("#dcw-book-search").value = "";
+    overlay.querySelector("#dcw-view-filter").value = "all";
+    overlay.querySelector('[data-action="refresh-books"]').textContent = PAGE_COPY.refreshLabel;
+    updateHistoryControls();
+    setWorkspaceView("preview", overlay);
+    await restoreSettings(overlay);
+  }
+
   function createBuilder() {
-    const overlay = document.createElement("div");
-    overlay.id = "dcw-overlay";
-    overlay.innerHTML = `
-      <section class="dcw-dialog" role="dialog" aria-modal="true" aria-labelledby="dcw-title">
-        <header class="dcw-topbar">
-          <div class="dcw-brand">
-            <span class="dcw-logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-            <div>
-              <h2 id="dcw-title">${escapeHtml(state.title)}</h2>
-              <p>豆瓣封面墙 · ${IS_EDITOR ? '独立书单工作台' : PAGE_COPY.sourceName} · 主题成图</p>
-            </div>
-          </div>
-          <button class="dcw-icon-button" type="button" data-action="close" aria-label="关闭">×</button>
-        </header>
-
-        <div class="dcw-body">
-          <aside class="dcw-panel">
-            <h3>墙面设置</h3>
-
-            <details class="dcw-library">
-              <summary>项目与自定义模板</summary>
-              <label>项目名称<input id="dcw-project-name" type="text" maxlength="80" value="${escapeAttribute(state.title)}"></label>
-              <div class="dcw-library-actions"><button type="button" data-action="save-project">保存为项目</button><button type="button" data-action="new-project">新建空白</button></div>
-              <label>我的项目<select id="dcw-project-list"><option value="">选择项目</option></select></label>
-              <button type="button" data-action="load-project">打开选中项目</button>
-              <label>模板名称<input id="dcw-template-name" type="text" maxlength="60" placeholder="例如：每月书单"></label>
-              <button type="button" data-action="save-template">保存当前样式为模板</button>
-              <label>我的模板<select id="dcw-template-list"><option value="">选择模板</option></select></label>
-              <button type="button" data-action="load-template">套用选中模板</button>
-              <p class="dcw-help">项目自动保存；另存同名项目会保留原项目。模板只保存样式，不保存作品和标题文字。</p>
-            </details>
-
-            <div class="dcw-field">
-              <span class="dcw-label">背景主题</span>
-              <div class="dcw-theme-grid" role="group" aria-label="背景主题">
-                ${[
-                  ["cover", "纯封面"],
-                  ["oak", "浅橡木"],
-                  ["walnut", "深胡桃木"],
-                  ["nordic", "北欧白"],
-                  ["vintage", "复古绿"]
-                ].map(([id, label]) => `
-                  <button type="button" data-action="set-theme" data-theme-value="${id}" aria-pressed="${id === "cover"}">
-                    <i aria-hidden="true"></i><span>${label}</span>
-                  </button>
-                `).join("")}
-              </div>
-            </div>
-
-            <div class="dcw-field">
-              <label for="dcw-style-preset">一键风格</label>
-              <select id="dcw-style-preset">
-                <option value="">自定义设置</option>
-                <option value="compact">紧凑封面墙</option>
-                <option value="oak">浅木收藏架</option>
-                <option value="gallery">北欧画册</option>
-                <option value="collector">深色典藏柜</option>
-              </select>
-            </div>
-
-            <div class="dcw-field-row">
-              <div class="dcw-field">
-                <label for="dcw-structure">展示结构</label>
-                <select id="dcw-structure" data-setting="structure">
-                  <option value="open">开放书架</option>
-                  <option value="floating">悬浮层板</option>
-                  <option value="cubby">格子书柜</option>
-                </select>
-              </div>
-              <div class="dcw-field">
-                <label for="dcw-alignment">最后一排</label>
-                <select id="dcw-alignment" data-setting="alignment">
-                  <option value="left">靠左</option>
-                  <option value="center">居中</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="dcw-field">
-              <label for="dcw-page-format">成图版式</label>
-              <select id="dcw-page-format" data-setting="pageFormat">
-                <option value="flow">内容长图</option>
-                <option value="square">1:1 方形海报</option>
-                <option value="portrait">4:5 竖版海报</option>
-                <option value="story">9:16 长竖版</option>
-                <option value="landscape">16:9 横版展示</option>
-              </select>
-            </div>
-
-            <div class="dcw-field">
-              <label for="dcw-export-mode">长图策略</label>
-              <select id="dcw-export-mode" data-setting="exportMode">
-                <option value="auto">自动安全分页</option>
-                <option value="single">单张长图</option>
-              </select>
-            </div>
-
-            <div class="dcw-field">
-              <label for="dcw-per-page">每页最多作品数（0 为自动）</label>
-              <input id="dcw-per-page" type="number" min="0" max="500" step="1" data-setting="booksPerPage" value="0">
-              <p id="dcw-layout-advice" class="dcw-advice"></p>
-              <button class="dcw-recommend" type="button" data-action="recommend-layout">采用推荐排版</button>
-            </div>
-
-            <div class="dcw-field">
-              <label for="dcw-margin">画面边距</label>
-              <select id="dcw-margin" data-setting="margin">
-                <option value="compact">紧凑</option>
-                <option value="comfortable" selected>舒适</option>
-                <option value="spacious">宽松</option>
-              </select>
-            </div>
-
-            <div class="dcw-field-row">
-              <div class="dcw-field">
-                <label for="dcw-title-mode">标题展示</label>
-                <select id="dcw-title-mode" data-setting="titleMode">
-                  <option value="none">关闭</option>
-                  <option value="top">顶部标题</option>
-                  <option value="plaque">书架铭牌</option>
-                </select>
-              </div>
-              <div class="dcw-field">
-                <label for="dcw-title-text">标题文字</label>
-                <input id="dcw-title-text" data-setting="titleText" type="text" maxlength="80" placeholder="自动生成">
-              </div>
-            </div>
-
-            <div class="dcw-field-row">
-              <div class="dcw-field">
-                <label for="dcw-columns">列数</label>
-                <select id="dcw-columns" data-setting="columns">
-                  ${[3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<option value="${n}" ${n === 5 ? "selected" : ""}>${n} 列</option>`).join("")}
-                </select>
-              </div>
-              <div class="dcw-field">
-                <label for="dcw-ratio">封面比例</label>
-                <select id="dcw-ratio" data-setting="ratio">
-                  <option value="2:3">2:3 经典</option>
-                  <option value="3:4">3:4 偏宽</option>
-                  <option value="1:1">1:1 方形</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="dcw-field">
-              <div class="dcw-range-head">
-                <label for="dcw-gap">封面间距</label>
-                <span class="dcw-range-value" id="dcw-gap-value">0 px</span>
-              </div>
-              <input id="dcw-gap" data-setting="gap" type="range" min="0" max="24" step="1" value="0">
-            </div>
-
-            <div class="dcw-field-row">
-              <div class="dcw-field">
-                <label for="dcw-fit">图片方式</label>
-                <select id="dcw-fit" data-setting="fit">
-                  <option value="cover">铺满裁切</option>
-                  <option value="contain">完整显示</option>
-                </select>
-              </div>
-              <div class="dcw-field">
-                <label for="dcw-width">导出宽度</label>
-                <select id="dcw-width" data-setting="width">
-                  <option value="1000">1000 px</option>
-                  <option value="1500" selected>1500 px</option>
-                  <option value="2000">2000 px</option>
-                  <option value="3000">3000 px</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="dcw-field">
-              <label for="dcw-background">留白颜色</label>
-              <input id="dcw-background" data-setting="background" type="color" value="#f5f2eb">
-            </div>
-
-            <div class="dcw-field">
-              <label for="dcw-shadow">封面阴影</label>
-              <select id="dcw-shadow" data-setting="shadow">
-                <option value="none">关闭</option>
-                <option value="soft" selected>柔和</option>
-                <option value="strong">明显</option>
-              </select>
-            </div>
-
-            <p class="dcw-help">在「整理作品」中勾选、排序；在「成品预览」中查看每页真实效果。草稿自动保存在当前浏览器。</p>
-
-            <div class="dcw-actions">
-              <p class="dcw-export-estimate" id="dcw-export-estimate">读取作品后显示预计导出尺寸</p>
-              <button class="dcw-button dcw-button-primary" type="button" data-action="export">导出 PNG</button>
-              <button class="dcw-button dcw-button-cancel" type="button" data-action="cancel-export" hidden>取消生成</button>
-              <button class="dcw-button dcw-button-secondary" type="button" data-action="reset">恢复默认样式</button>
-            </div>
-          </aside>
-
-          <main class="dcw-workspace">
-            <div class="dcw-viewbar">
-              <div role="group" aria-label="工作视图">
-                <button type="button" data-action="view-organize" aria-pressed="true">整理作品</button>
-                <button type="button" data-action="view-preview" aria-pressed="false">成品预览</button>
-              </div>
-              <span id="dcw-draft-status" role="status">等待保存草稿</span>
-              <button type="button" data-action="undo" disabled title="撤销 Ctrl/Cmd+Z">撤销</button>
-              <button type="button" data-action="redo" disabled title="重做 Ctrl/Cmd+Shift+Z">重做</button>
-              <button type="button" data-action="refresh-books">更新作品</button>
-              <button type="button" data-action="open-editor">独立工作台</button>
-            </div>
-            <div class="dcw-workspace-head">
-              <span class="dcw-status" id="dcw-status" role="status">准备读取${PAGE_COPY.sourceName}…</span>
-              <div class="dcw-mini-actions">
-                <button type="button" data-action="upload-covers">上传封面</button>
-                <button type="button" data-action="import-list" title="TXT：每行一个书名；CSV/TSV：首行需要 title 或书名列；JSON：书名数组或含 title、coverUrl 的对象数组">导入清单</button>
-                <button type="button" data-action="select-all">选择全部作品</button>
-                <button type="button" data-action="invert">反选全部作品</button>
-              </div>
-            </div>
-            <input type="file" id="dcw-cover-files" accept="image/jpeg,image/png,image/webp" multiple hidden>
-            <input type="file" id="dcw-list-file" accept=".txt,.csv,.tsv,.json" hidden>
-            <div class="dcw-filterbar" title="搜索和筛选只影响预览；导出仍使用全部已选择作品">
-              <input id="dcw-book-search" type="search" placeholder="搜索作品名称" aria-label="搜索作品名称">
-              <select id="dcw-view-filter" aria-label="筛选封面">
-                <option value="all">显示全部</option>
-                <option value="included">仅看已选</option>
-                <option value="excluded">仅看已排除</option>
-                <option value="missing">待补封面</option>
-              </select>
-              <span id="dcw-filter-count">全部作品</span>
-            </div>
-            <div class="dcw-canvas-shell">
-              <div id="dcw-preview" class="dcw-organizer">
-                <div class="dcw-empty">正在读取${PAGE_COPY.sourceName}中的封面…</div>
-              </div>
-              <section id="dcw-output" hidden aria-label="成品预览">
-                <div class="dcw-pagebar">
-                  <button type="button" data-action="previous-page" aria-label="上一页">←</button>
-                  <label>页码 <select id="dcw-preview-page" aria-label="预览页码"></select></label>
-                  <button type="button" data-action="next-page" aria-label="下一页">→</button>
-                  <span id="dcw-page-dimensions"></span>
-                  <select id="dcw-preview-fit" aria-label="预览缩放">
-                    <option value="page">适合整页</option>
-                    <option value="width">适合宽度</option>
-                  </select>
-                  <button type="button" data-action="retry-preview">重新载入</button>
-                </div>
-                <p id="dcw-preview-status" role="status"></p>
-                <div id="dcw-output-canvas"></div>
-              </section>
-            </div>
-          </main>
-        </div>
-      </section>
-    `;
-    return overlay;
+    const overlay=document.createElement('div');overlay.id='dcw-overlay';
+    overlay.innerHTML=`
+    <section class="dcw-dialog" role="dialog" aria-modal="true" aria-labelledby="dcw-title">
+      <header class="dcw-topbar"><div class="dcw-brand"><span class="dcw-wordmark">书单</span><h2 id="dcw-title">${escapeHtml(state.title)}</h2></div><div class="dcw-top-actions"><button data-action="undo" aria-label="撤销" disabled>↶</button><button data-action="redo" aria-label="重做" disabled>↷</button><button data-action="close" aria-label="关闭">×</button></div></header>
+      <div class="dcw-body">
+        <aside class="dcw-panel">
+          <div><p class="dcw-eyebrow">MADE TO SHARE</p><h3>把好书，分享出去。</h3><p class="dcw-intro">选择一个画幅，剩下的交给排版。</p></div>
+          <fieldset class="dcw-platforms"><legend>分享到</legend>
+            ${Object.entries(DCWWorkspace.SHARE_PRESETS).map(([id,p])=>`<button data-action="share-preset" data-preset="${id}" aria-pressed="false"><span>${p.label}</span><small>${p.ratioLabel}</small></button>`).join('')}
+          </fieldset>
+          <div class="dcw-field"><label for="dcw-title-text">图片标题</label><input id="dcw-title-text" data-setting="titleText" maxlength="80" placeholder="自动使用书单名称"></div>
+          <fieldset class="dcw-colors"><legend>底色</legend>${[['#ffffff','纯白'],['#f5f2eb','暖纸'],['#e9eef2','雾灰']].map(([color,name])=>`<button data-action="share-color" data-color="${color}" aria-label="${name}" aria-pressed="false" style="--swatch:${color}"><i></i><span>${name}</span></button>`).join('')}</fieldset>
+          <div class="dcw-source"><button data-action="edit-books"><span>选择与排序</span><span id="dcw-source-count">0 本 →</span></button><details><summary>添加作品</summary><div class="dcw-add-actions"><button data-action="upload-covers">上传封面</button><button data-action="import-list">导入书单</button><button data-action="refresh-books">${PAGE_COPY.refreshLabel}</button><button data-action="open-editor">独立工作台</button></div><p>TXT 每行一个书名；也支持 CSV、TSV 和 JSON。缺图可在作品卡片上补充。</p></details></div>
+          <div class="dcw-actions"><p id="dcw-export-estimate" aria-live="polite"></p><button class="dcw-button-primary" data-action="export">导出图片</button><button data-action="cancel-export" hidden>取消生成</button><span id="dcw-draft-status" role="status">自动保存在此浏览器</span></div>
+        </aside>
+        <main class="dcw-workspace">
+          <div class="dcw-viewbar"><div role="group" aria-label="工作视图"><button data-action="view-preview" aria-pressed="true">成品预览</button><button data-action="view-organize" aria-pressed="false">整理作品</button></div><span class="dcw-quiet">自动排版 · 高清 PNG</span></div>
+          <p id="dcw-status" class="dcw-status" role="status">准备作品…</p>
+          <div class="dcw-filterbar" hidden><input id="dcw-book-search" type="search" placeholder="搜索书名" aria-label="搜索作品名称"><select id="dcw-view-filter" aria-label="筛选封面"><option value="all">全部作品</option><option value="included">已选择</option><option value="excluded">未选择</option><option value="missing">待补封面</option></select><span id="dcw-filter-count"></span></div>
+          <div class="dcw-mini-actions" hidden><button data-action="select-all">全选</button><button data-action="invert">反选</button><button data-action="view-preview">完成，查看图片 →</button></div>
+          <div class="dcw-canvas-shell"><div id="dcw-preview" class="dcw-organizer" hidden></div><section id="dcw-output" aria-label="成品预览"><div id="dcw-output-canvas"></div><p id="dcw-preview-status" role="status"></p><div class="dcw-pagebar"><button data-action="previous-page" aria-label="上一页">←</button><select id="dcw-preview-page" aria-label="预览页码"></select><button data-action="next-page" aria-label="下一页">→</button><span id="dcw-page-dimensions"></span><button data-action="retry-preview" aria-label="重新载入">↻</button></div></section></div>
+        </main>
+      </div><input type="file" id="dcw-cover-files" accept="image/jpeg,image/png,image/webp" multiple hidden><input type="file" id="dcw-list-file" accept=".txt,.csv,.tsv,.json" hidden>
+    </section>`;return overlay;
   }
-
   function bindBuilderEvents(overlay) {
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) {
-        closeBuilder();
-        return;
-      }
-
-      const action = event.target.closest("[data-action]")?.dataset.action;
-      if (!action) {
-        return;
-      }
-      if ((state.importing || state.libraryBusy || state.loading) && !['close','cancel-export','view-preview','view-organize'].includes(action)) { showToast("正在处理，请稍候"); return; }
-
-      if (action === "close") closeBuilder();
-      if (action === "export") exportWall(overlay);
-      if (action === "cancel-export") cancelExport(overlay);
-      if (action === "reset") resetSettings(overlay);
-      if (action === "select-all") setAllIncluded(true, overlay);
-      if (action === "invert") invertSelection(overlay);
-      if (action === "view-organize") setWorkspaceView("organize", overlay);
-      if (action === "view-preview") setWorkspaceView("preview", overlay);
-      if (action === "previous-page") changePreviewPage(state.previewPage - 1, overlay);
-      if (action === "next-page") changePreviewPage(state.previewPage + 1, overlay);
-      if (action === "retry-preview") schedulePreview(overlay);
-      if (action === "refresh-books" && !state.loading) loadBooks(overlay);
-      if (action === "undo") travelHistory(-1, overlay);
-      if (action === "redo") travelHistory(1, overlay);
-      if (action === "save-project") runLibraryAction(() => saveProjectAs(overlay));
-      if (action === "load-project") runLibraryAction(() => loadProject(overlay));
-      if (action === "new-project") runLibraryAction(() => newProject(overlay));
-      if (action === "save-template") runLibraryAction(() => saveTemplate(overlay));
-      if (action === "load-template") runLibraryAction(() => loadTemplate(overlay));
-      if (action === "recommend-layout") applyRecommendation(overlay);
-      if (action === "open-editor") sendExtension({type:"DCW_OPEN_EDITOR"}).catch(error=>showToast(error.message));
-      if (action === "upload-covers") { state.replaceCoverKey = null; overlay.querySelector("#dcw-cover-files").multiple = true; overlay.querySelector("#dcw-cover-files").click(); }
-      if (action === "import-list") overlay.querySelector("#dcw-list-file").click();
-      if (action === "set-theme") {
-        setTheme(event.target.closest("[data-theme-value]")?.dataset.themeValue, overlay);
+    overlay.addEventListener('click',event=>{
+      const button=event.target.closest('[data-action]'),action=button?.dataset.action;
+      if(!action)return;
+      if((state.importing||state.loading)&&!['close','cancel-export','view-preview','view-organize'].includes(action)){showToast('正在处理，请稍候');return;}
+      if(action==='close')closeBuilder();
+      if(action==='export')exportWall(overlay);
+      if(action==='cancel-export')cancelExport(overlay);
+      if(action==='undo')travelHistory(-1,overlay);
+      if(action==='redo')travelHistory(1,overlay);
+      if(action==='view-preview')setWorkspaceView('preview',overlay);
+      if(action==='view-organize'||action==='edit-books')setWorkspaceView('organize',overlay);
+      if(action==='select-all')setAllIncluded(true,overlay);
+      if(action==='invert')invertSelection(overlay);
+      if(action==='previous-page')changePreviewPage(state.previewPage-1,overlay);
+      if(action==='next-page')changePreviewPage(state.previewPage+1,overlay);
+      if(action==='retry-preview')schedulePreview(overlay);
+      if(action==='refresh-books')loadBooks(overlay);
+      if(action==='open-editor')sendExtension({type:'DCW_OPEN_EDITOR'}).catch(e=>showToast(e.message));
+      if(action==='upload-covers'){state.replaceCoverKey=null;const input=overlay.querySelector('#dcw-cover-files');input.multiple=true;input.click();}
+      if(action==='import-list')overlay.querySelector('#dcw-list-file').click();
+      if(action==='share-preset'||action==='share-color'){
+        recordHistory();
+        if(action==='share-preset')state.settings.sharePreset=button.dataset.preset;else state.settings.background=button.dataset.color;
+        state.previewPage=0;applySettings(overlay);queueDraft();
       }
     });
-
-    overlay.addEventListener("input", (event) => {
-      if (state.importing || state.libraryBusy || state.loading) return;
-      if (event.target.id === "dcw-book-search") {
-        state.viewQuery = event.target.value.trim().toLocaleLowerCase("zh-CN");
-        renderBooks(overlay);
-        return;
-      }
-
-      const key = event.target.dataset.setting;
-      if (!key) return;
-      const next = normalizeSetting(key, event.target.value);
-      if (state.settings[key] === next) return;
-      recordHistory(`setting:${key}`);
-      overlay.querySelector("#dcw-style-preset").value = "";
-      state.settings[key] = next;
-      applySettings(overlay);
-      if (key === "columns" && state.loaded) renderBooks(overlay);
-      saveSettings();
+    overlay.addEventListener('input',event=>{
+      if(state.importing||state.loading)return;
+      if(event.target.id==='dcw-book-search'){state.viewQuery=event.target.value.trim().toLocaleLowerCase('zh-CN');renderBooks(overlay);}
+      if(event.target.id==='dcw-title-text'){recordHistory('titleText');state.settings.titleText=event.target.value;applySettings(overlay);queueDraft();}
     });
-
-    overlay.addEventListener("change", (event) => {
-      if (event.target.id === "dcw-cover-files") { handleCoverFiles([...event.target.files], overlay); event.target.value = ""; return; }
-      if (event.target.id === "dcw-list-file") { handleListFile(event.target.files[0], overlay); event.target.value = ""; return; }
-      if (state.importing || state.libraryBusy || state.loading) return;
-      if (event.target.id === "dcw-preview-fit") {
-        overlay.querySelector("#dcw-output-canvas").dataset.fit = event.target.value;
-        fitOutputCanvas(overlay);
-        return;
-      }
-      if (event.target.id === "dcw-preview-page") {
-        changePreviewPage(Number(event.target.value), overlay);
-        return;
-      }
-      if (event.target.id === "dcw-style-preset") {
-        applyStylePreset(event.target.value, overlay);
-        return;
-      }
-      if (event.target.id === "dcw-view-filter") {
-        state.viewFilter = event.target.value;
-        renderBooks(overlay);
-        return;
-      }
-
-      const key = event.target.dataset.setting;
-      if (!key) return;
-      const next = normalizeSetting(key, event.target.value);
-      if (state.settings[key] === next) return;
-      recordHistory(`setting:${key}`);
-      overlay.querySelector("#dcw-style-preset").value = "";
-      state.settings[key] = next;
-      applySettings(overlay);
-      saveSettings();
+    overlay.addEventListener('change',event=>{
+      if(event.target.id==='dcw-cover-files'){handleCoverFiles([...event.target.files],overlay);event.target.value='';return;}
+      if(event.target.id==='dcw-list-file'){handleListFile(event.target.files[0],overlay);event.target.value='';return;}
+      if(event.target.id==='dcw-preview-page')changePreviewPage(Number(event.target.value),overlay);
+      if(event.target.id==='dcw-view-filter'){state.viewFilter=event.target.value;renderBooks(overlay);}
     });
-
-    document.addEventListener("keydown", (event) => {
-      const editing = event.target.closest?.('input,textarea,select,[contenteditable="true"]');
-      if (!overlay.hidden && !editing && !state.importing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-        event.preventDefault(); travelHistory(event.shiftKey ? 1 : -1, overlay);
-      }
-      if (event.key === "Escape" && !overlay.hidden) {
-        closeBuilder();
-      }
+    document.addEventListener('keydown',event=>{
+      if(overlay.hidden)return;
+      const editing=event.target.closest?.('input,textarea,select,[contenteditable="true"]');
+      if(!editing&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();travelHistory(event.shiftKey?1:-1,overlay);}
+      if(event.key==='Escape')closeBuilder();
     });
-    window.addEventListener("pagehide", flushDraft);
-    const previewResize = new ResizeObserver(() => fitOutputCanvas(overlay));
-    previewResize.observe(overlay.querySelector(".dcw-canvas-shell"));
+    window.addEventListener('pagehide',flushDraft);
+    new ResizeObserver(()=>fitOutputCanvas(overlay)).observe(overlay.querySelector('.dcw-canvas-shell'));
   }
-
   function closeBuilder() {
     flushDraft();
     invalidatePreview();
@@ -574,51 +446,27 @@
 
   async function restoreSettings(overlay) {
     try {
-      const saved = await chrome.storage.local.get(["dcwSettings", draftKey()]);
-      state.settings = { ...DEFAULT_SETTINGS, ...(saved.dcwSettings || {}) };
-      let draft = saved[draftKey()];
-      if (draft?.projectId) {
-        const key=`dcwProject:${draft.projectId}`;
-        const projects=await chrome.storage.local.get(key), project=projects[key];
-        if (project?.version===1 && project.updatedAt>=draft.updatedAt && Array.isArray(project.books) && project.books.every(isDraftBook)) draft=project;
+      const key=draftKey(),legacyKey=key.replace('dcwShareDraft:','dcwDraft:');
+      const saved=await chrome.storage.local.get([key,legacyKey]),draft=saved[key]||saved[legacyKey];
+      if(draft?.version===1&&Array.isArray(draft.books)&&draft.books.every(isDraftBook)){
+        state.books=draft.books;state.title=draft.title||state.title;state.loaded=true;
+        state.settings=saved[key]?{...DEFAULT_SETTINGS,...draft.settings}:{...DEFAULT_SETTINGS,titleText:draft.settings?.titleText||''};
+        setDraftStatus(saved[key]?'草稿已恢复':'已接续旧版书单，旧草稿仍保留');
       }
-      if (draft?.version === 1 && Array.isArray(draft.books) && draft.books.every(isDraftBook)) {
-        state.books = draft.books;
-        state.settings = { ...DEFAULT_SETTINGS, ...draft.settings };
-        state.title = draft.title || state.title;
-        state.projectId = draft.projectId || null;
-        state.loaded = true;
-        setDraftStatus("已恢复此页面的草稿");
-        setStatus(overlay, `已恢复 ${state.books.length} 部作品；${IS_EDITOR ? '可继续上传封面或导入清单。' : '可点击「更新作品」获取新增条目。'}`);
-      }
-    } catch {
-      state.settings = { ...DEFAULT_SETTINGS };
-    }
-
-    syncSettingInputs(overlay);
-    applySettings(overlay);
-    overlay.querySelector("#dcw-title").textContent = state.title;
-    overlay.querySelector("#dcw-project-name").value = state.title;
-    overlay.querySelector('[data-action="refresh-books"]').hidden = IS_EDITOR;
-    overlay.querySelector('[data-action="open-editor"]').hidden = IS_EDITOR;
-    refreshLibrary(overlay).catch(()=>setDraftStatus("无法读取项目库，请检查扩展状态"));
-  }
-
-  function saveSettings() {
-    queueDraft();
-    try {
-      const pendingSave = chrome.storage.local.set({ dcwSettings: state.settings });
-      pendingSave?.catch?.(() => {});
-    } catch {
-      // 扩展重新加载后，旧标签页中的 content script 会暂时失去扩展上下文。
-      // 样式调整仍可继续使用，刷新页面后会恢复设置持久化。
-    }
+    }catch{setDraftStatus('暂时无法读取草稿');}
+    state.projectId=null;
+    syncSettingInputs(overlay);applySettings(overlay);
+    overlay.querySelector('#dcw-title').textContent=state.title;
+    overlay.querySelector('[data-action="refresh-books"]').hidden=IS_EDITOR;
+    overlay.querySelector('[data-action="open-editor"]').hidden=IS_EDITOR;
   }
 
   function draftKey() {
     const url = new URL(location.href);
-    const scope = PAGE_KIND === "author" ? (url.searchParams.get("type") || "writer") : "books";
-    return `dcwDraft:v1:${url.pathname.replace(/\/$/, "")}:${scope}`;
+    const scope = PAGE_KIND === "author" ? (url.searchParams.get("type") || "writer")
+      : IS_FIVEBOOKS && state.sourceMode !== "recommended" ? state.sourceMode
+      : "books";
+    return `dcwShareDraft:v1:${url.pathname.replace(/\/$/, "")}:${scope}`;
   }
 
   function isDraftBook(book) {
@@ -665,18 +513,12 @@
     overlay.querySelector('[data-action="redo"]').disabled = !state.redo.length;
   }
 
-  function applySnapshot(snapshot, overlay) {
-    state.title = snapshot.title || '我的书单';
-    state.books = snapshot.books.map(book=>({...book}));
-    state.settings = {...DEFAULT_SETTINGS,...snapshot.settings};
-    state.loaded = true;
-    state.previewPage = 0;
-    overlay.querySelector('#dcw-title').textContent = state.title;
-    overlay.querySelector('#dcw-project-name').value = state.title;
-    overlay.querySelector('#dcw-style-preset').value = '';
-    syncSettingInputs(overlay);applySettings(overlay);renderBooks(overlay);queueDraft();
+  function applySnapshot(snapshot,overlay) {
+    state.title=snapshot.title||'我的书单';state.books=snapshot.books.map(book=>({...book}));
+    state.settings={...DEFAULT_SETTINGS,...snapshot.settings};state.loaded=true;state.previewPage=0;
+    overlay.querySelector('#dcw-title').textContent=state.title;
+    syncSettingInputs(overlay);renderBooks(overlay);queueDraft();
   }
-
   function travelHistory(direction, overlay) {
     if (state.importing || state.loading || state.libraryBusy) return;
     const source = direction < 0 ? state.undo : state.redo;
@@ -687,107 +529,6 @@
     state.historyGroup = null;
     updateHistoryControls();
     setStatus(overlay, direction < 0 ? '已撤销上一步' : '已重做');
-  }
-
-  async function runLibraryAction(action) {
-    if (state.libraryBusy || state.loading || state.exportJob) { showToast('正在读取、保存或导出，请稍候'); return; }
-    state.libraryBusy = true;
-    document.querySelector('#dcw-overlay')?.classList.add('dcw-importing');
-    try { await action(); } catch(error) { showToast(`操作未完成：${error.message}`); }
-    finally { state.libraryBusy = false; document.querySelector('#dcw-overlay')?.classList.remove('dcw-importing'); }
-  }
-
-  async function refreshLibrary(overlay) {
-    const stored = await chrome.storage.local.get(null);
-    for (const [prefix,selector,placeholder] of [['dcwProject:','#dcw-project-list','选择项目'],['dcwTemplate:','#dcw-template-list','选择模板']]) {
-      const select=overlay.querySelector(selector), selected=select.value;
-      select.replaceChildren(new Option(placeholder,''));
-      Object.entries(stored).filter(([key,value])=>key.startsWith(prefix)&&value?.version===1).sort((a,b)=>b[1].updatedAt-a[1].updatedAt).forEach(([key,value])=>{
-        select.add(new Option(`${value.title || '未命名'}${prefix==='dcwProject:' ? ` · ${value.books?.length || 0} 部` : ''}`,key));
-      });
-      select.value=selected;
-    }
-  }
-
-  async function saveProjectAs(overlay) {
-    if (await flushDraft() === false) throw new Error('当前草稿未保存，请检查存储空间');
-    const title=overlay.querySelector('#dcw-project-name').value.trim() || state.title;
-    const projectId=crypto.randomUUID();
-    const snapshot={version:1,updatedAt:Date.now(),...captureSnapshot(),title,projectId};
-    await chrome.storage.local.set({[`dcwProject:${projectId}`]:snapshot});
-    recordHistory();
-    state.title=title;state.projectId=projectId;
-    overlay.querySelector('#dcw-title').textContent=title;
-    await flushDraft();await refreshLibrary(overlay);
-    overlay.querySelector('#dcw-project-list').value=`dcwProject:${projectId}`;
-    schedulePreview(overlay);showToast('已保存为新项目，后续编辑自动保存');
-  }
-
-  async function loadProject(overlay) {
-    const key=overlay.querySelector('#dcw-project-list').value;
-    if (!key) { showToast('请先选择项目'); return; }
-    await preserveCurrentProject();
-    const saved=await chrome.storage.local.get(key), project=saved[key];
-    if (!project || !Array.isArray(project.books) || !project.books.every(isDraftBook)) throw new Error('项目数据不可用');
-    state.projectId=key.slice('dcwProject:'.length);
-    state.undo=[];state.redo=[];state.historyGroup=null;
-    state.viewQuery='';state.viewFilter='all';
-    overlay.querySelector('#dcw-book-search').value='';overlay.querySelector('#dcw-view-filter').value='all';
-    applySnapshot(project,overlay);updateHistoryControls();await flushDraft();await refreshLibrary(overlay);
-    overlay.querySelector('#dcw-project-list').value=key;
-    setStatus(overlay,`已打开项目「${state.title}」 · ${state.books.length} 部作品`);
-    showToast('项目已打开，原项目已自动保存');
-  }
-
-  async function preserveCurrentProject() {
-    if (await flushDraft() === false) throw new Error('当前草稿尚未保存，已取消切换以保护作品');
-    // Preserve unnamed work before replacing the page's working draft.
-    if (!state.projectId && state.books.length) {
-      const id=crypto.randomUUID();
-      await chrome.storage.local.set({[`dcwProject:${id}`]:{version:1,updatedAt:Date.now(),projectId:id,...captureSnapshot()}});
-    }
-  }
-
-  async function newProject(overlay) {
-    await preserveCurrentProject();
-    state.projectId=crypto.randomUUID();state.undo=[];state.redo=[];state.historyGroup=null;
-    state.viewQuery='';state.viewFilter='all';
-    overlay.querySelector('#dcw-book-search').value='';overlay.querySelector('#dcw-view-filter').value='all';
-    applySnapshot({title:'未命名书单',books:[],settings:DEFAULT_SETTINGS},overlay);
-    updateHistoryControls();await flushDraft();await refreshLibrary(overlay);
-    setWorkspaceView('organize',overlay);showToast('空白项目已创建，原有作品已保留到项目库');
-  }
-
-  async function saveTemplate(overlay) {
-    const title=overlay.querySelector('#dcw-template-name').value.trim();
-    if (!title) { showToast('请填写模板名称'); return; }
-    const settings={...state.settings};delete settings.titleText;
-    const key=`dcwTemplate:${crypto.randomUUID()}`;
-    await chrome.storage.local.set({[key]:{version:1,title,updatedAt:Date.now(),settings}});
-    await refreshLibrary(overlay);overlay.querySelector('#dcw-template-list').value=key;
-    showToast('模板已保存，可在其他书单中套用');
-  }
-
-  async function loadTemplate(overlay) {
-    const key=overlay.querySelector('#dcw-template-list').value;
-    if (!key) { showToast('请先选择模板'); return; }
-    const saved=await chrome.storage.local.get(key), template=saved[key];
-    if (!template?.settings) throw new Error('模板不可用');
-    recordHistory();state.settings={...state.settings,...template.settings,titleText:state.settings.titleText};
-    syncSettingInputs(overlay);applySettings(overlay);saveSettings();showToast('模板已套用，作品与标题文字保持不变');
-  }
-
-  function getRecommendation() {
-    return DCWWorkspace.recommendLayout(state.books.filter(book=>book.included).length,state.settings,buildExportPlan);
-  }
-
-  function applyRecommendation(overlay) {
-    const recommendation=getRecommendation();
-    if (!recommendation) { showToast('请先选择作品'); return; }
-    recordHistory();
-    Object.assign(state.settings,{columns:recommendation.columns,booksPerPage:recommendation.booksPerPage,exportMode:'auto'});
-    syncSettingInputs(overlay);applySettings(overlay);saveSettings();
-    showToast(`已采用 ${recommendation.columns} 列，每页最多 ${recommendation.booksPerPage} 部`);
   }
 
   function sendExtension(message) {
@@ -878,10 +619,9 @@
         ({ key, title, coverUrl, subjectUrl, included }))
     };
     const key = draftKey();
-    const projectKey = state.projectId ? `dcwProject:${state.projectId}` : null;
     state.draftWrite = state.draftWrite.catch(() => {}).then(async () => {
       try {
-        await chrome.storage.local.set({ [key]: snapshot, ...(projectKey ? {[projectKey]:snapshot} : {}) });
+        await chrome.storage.local.set({ [key]: snapshot });
         if (!state.draftTimer) setDraftStatus("草稿已保存到此浏览器");
         return true;
       } catch {
@@ -941,16 +681,9 @@
   }
 
   function fitOutputCanvas(overlay) {
-    const host = overlay.querySelector("#dcw-output-canvas");
-    const canvas = host.querySelector("canvas");
-    if (!canvas || state.workspaceView !== "preview") return;
-    if (host.dataset.fit === "width") { canvas.style.maxHeight = "none"; return; }
-    const shell = overlay.querySelector(".dcw-canvas-shell");
-    const above = host.getBoundingClientRect().top - shell.getBoundingClientRect().top + shell.scrollTop;
-    const bottom = parseFloat(getComputedStyle(shell).paddingBottom) || 0;
-    canvas.style.maxHeight = `${Math.max(160, shell.clientHeight - above - bottom)}px`;
+    const shell=overlay.querySelector('.dcw-canvas-shell'),canvas=overlay.querySelector('#dcw-output-canvas canvas');
+    if(canvas&&state.workspaceView==='preview')canvas.style.maxHeight=`${Math.max(180,shell.clientHeight-100)}px`;
   }
-
   async function renderOutputPreview(overlay) {
     const revision = state.previewRevision;
     const settings = { ...state.settings };
@@ -1009,37 +742,6 @@
     }
   }
 
-  function resetSettings(overlay) {
-    recordHistory();
-    state.settings = { ...DEFAULT_SETTINGS };
-    overlay.querySelector("#dcw-style-preset").value = "";
-    syncSettingInputs(overlay);
-    applySettings(overlay);
-    if (state.loaded) renderBooks(overlay);
-    saveSettings();
-  }
-
-  function setTheme(theme, overlay) {
-    if (!THEME_IDS.includes(theme)) return;
-    recordHistory();
-    overlay.querySelector("#dcw-style-preset").value = "";
-    state.settings.theme = theme;
-    applySettings(overlay);
-    saveSettings();
-  }
-
-  function applyStylePreset(presetId, overlay) {
-    const preset = STYLE_PRESETS[presetId];
-    if (!preset) return;
-    recordHistory();
-    state.settings = { ...state.settings, ...preset };
-    syncSettingInputs(overlay);
-    overlay.querySelector("#dcw-style-preset").value = presetId;
-    applySettings(overlay);
-    if (state.loaded) renderBooks(overlay);
-    saveSettings();
-  }
-
   function syncSettingInputs(overlay) {
     Object.entries(state.settings).forEach(([key, value]) => {
       const input = overlay.querySelector(`[data-setting="${key}"]`);
@@ -1056,20 +758,14 @@
   }
 
   function applySettings(overlay) {
-    const { theme, titleMode, gap } = state.settings;
-    overlay.querySelectorAll("[data-theme-value]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button.dataset.themeValue === theme));
-    });
-    overlay.querySelector("#dcw-shadow").disabled = theme === "cover";
-    overlay.querySelector("#dcw-structure").disabled = theme === "cover";
-    overlay.querySelector("#dcw-export-mode").disabled = state.settings.pageFormat !== "flow";
-    overlay.querySelector("#dcw-per-page").disabled = state.settings.pageFormat === 'flow' && state.settings.exportMode === 'single';
-    overlay.querySelector("#dcw-title-text").disabled = titleMode === "none";
-    overlay.querySelector("#dcw-gap-value").textContent = `${gap} px`;
-    updateExportEstimate(overlay);
-    schedulePreview(overlay);
+    state.settings=DCWWorkspace.shareSettings(state.books.filter(book=>book.included).length,state.settings,buildExportPlan);
+    overlay.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.preset===state.settings.sharePreset)));
+    overlay.querySelectorAll('[data-color]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.color===state.settings.background)));
+    const count=state.books.filter(book=>book.included).length;
+    overlay.querySelector('#dcw-source-count').textContent=`${count} / ${state.books.length} 本 →`;
+    overlay.querySelector('[data-action="export"]').disabled=!count||Boolean(state.exportJob);
+    updateExportEstimate(overlay);schedulePreview(overlay);
   }
-
   function getTitleText(count, settings = state.settings) {
     const customTitle = String(settings.titleText || "").trim();
     if (customTitle) return customTitle;
@@ -1088,12 +784,16 @@
   async function loadBooks(overlay) {
     state.loading = true;
     overlay.querySelector('[data-action="refresh-books"]').disabled = true;
-    setStatus(overlay, `正在读取${PAGE_COPY.sourceName}第 1 页…`);
+    setStatus(overlay, IS_FIVEBOOKS
+      ? `正在读取${PAGE_COPY.sourceName}…`
+      : `正在读取${PAGE_COPY.sourceName}第 1 页…`);
 
     try {
-      const allBooks = PAGE_KIND === "author"
-        ? await loadAuthorWorks(overlay)
-        : await loadDoulistBooks(overlay);
+      const allBooks = IS_FIVEBOOKS
+        ? parseFiveBooksBooks(document, state.sourceMode)
+        : PAGE_KIND === "author"
+          ? await loadAuthorWorks(overlay)
+          : await loadDoulistBooks(overlay);
 
       const hadDraft = state.loaded;
       if (hadDraft) recordHistory();
@@ -1103,9 +803,11 @@
       queueDraft();
 
       if (allBooks.length === 0) {
-        setStatus(overlay, `没有找到作品封面。${PAGE_COPY.emptyHint}。`, "error");
+        setStatus(overlay, `${IS_FIVEBOOKS ? "没有找到书目" : "没有找到作品封面"}。${PAGE_COPY.emptyHint}。`, "error");
       } else {
-        setStatus(overlay, hadDraft ? `作品已更新，保留原有顺序与选择；共 ${state.books.length} 部作品。` : `已找到 ${allBooks.length} ${PAGE_COPY.itemName} · 勾选、拖动或用箭头排序`);
+        setStatus(overlay, hadDraft
+          ? `${IS_FIVEBOOKS ? "书目" : "作品"}已更新，保留原有顺序与选择；共 ${state.books.length} ${PAGE_COPY.itemName}。`
+          : `已找到 ${allBooks.length} ${PAGE_COPY.itemName} · 勾选、拖动或用箭头排序`);
       }
     } catch (error) {
       setStatus(overlay, `读取失败：${error.message}`, "error");
@@ -1299,6 +1001,93 @@
     });
   }
 
+  function parseFiveBooksBooks(doc, sourceMode = "recommended") {
+    let items;
+    if (sourceMode === "authored") {
+      items = doc.querySelectorAll(".page-content.people .book-container .row[data-book-id]");
+    } else if (sourceMode.startsWith("interview:")) {
+      items = fiveBooksInterview(sourceMode, doc)?.querySelectorAll("section.book-list li.single-book") || [];
+    } else {
+      const heading = Array.from(doc.querySelectorAll("h3.block-heading"))
+        .find((candidate) => /^Interviews? with\b/i.test(candidate.textContent.trim()));
+      const section = heading?.closest(".infinite-container") || heading?.parentElement;
+      items = section?.querySelectorAll("li.single-book") || [];
+    }
+
+    const books = Array.from(items).flatMap((item, index) => {
+      const title = item.querySelector(".book-title .title")?.textContent.trim()
+        || item.querySelector("h2.book-title a")?.textContent.trim()
+        || item.querySelector(".book-title")?.textContent.split(/\bby\b/i)[0].trim();
+      if (!title) return [];
+
+      const bookLink = item.querySelector('h2.book-title a[href*="/book/"], a[href*="/book/"]');
+      const subjectUrl = canonicalFiveBooksBookUrl(bookLink?.getAttribute("href"));
+      const coverUrl = readFiveBooksCover(item);
+      const bookId = item.getAttribute("data-book-id");
+
+      return [{
+        key: bookId ? `fivebooks:${bookId}` : subjectUrl || `fivebooks:${title}:${index}`,
+        title,
+        subjectUrl,
+        coverUrl,
+        included: true
+      }];
+    });
+    const unique = [];
+    const seen = new Set();
+    addUniqueBooks(unique, seen, books);
+    return unique;
+  }
+
+  function parseFiveBooksRecommendations(doc) {
+    return parseFiveBooksBooks(doc, "recommended");
+  }
+
+  function canonicalFiveBooksBookUrl(rawUrl) {
+    if (!rawUrl) return "";
+    try {
+      const url = new URL(rawUrl, location.href);
+      if (!/^(?:www\.)?fivebooks\.com$/i.test(url.hostname)) return "";
+      url.pathname = url.pathname.replace(/\/(?:buy|listen)\/?$/i, "/");
+      url.search = "";
+      url.hash = "";
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+
+  function readFiveBooksCover(item) {
+    const webp = item.querySelector('.cover-wrap source[type="image/webp"], picture source[type="image/webp"]');
+    const image = item.querySelector(".cover-wrap img, img.cover, picture img");
+    const candidates = [
+      bestSrcsetUrl(webp?.getAttribute("data-srcset")),
+      bestSrcsetUrl(webp?.getAttribute("srcset")),
+      bestSrcsetUrl(image?.getAttribute("data-srcset")),
+      bestSrcsetUrl(image?.getAttribute("srcset")),
+      image?.getAttribute("data-src"),
+      image?.getAttribute("data-original"),
+      image?.getAttribute("src")
+    ];
+    for (const candidate of candidates) {
+      const url = absoluteUrl(candidate);
+      if (url && !url.startsWith("data:") && /^(?:www\.)?fivebooks\.com$/i.test(new URL(url).hostname)) {
+        return url;
+      }
+    }
+    return "";
+  }
+
+  function bestSrcsetUrl(srcset) {
+    if (!srcset) return "";
+    return srcset.split(",").map((candidate) => {
+      const [url, descriptor = ""] = candidate.trim().split(/\s+/, 2);
+      const score = Number.parseFloat(descriptor) || 0;
+      return { url, score };
+    }).filter((candidate) => candidate.url)
+      .sort((left, right) => right.score - left.score)[0]?.url || "";
+  }
+
   function absoluteUrl(rawUrl) {
     if (!rawUrl) return "";
     try {
@@ -1382,8 +1171,7 @@
       card.addEventListener("dragend", () => { state.draggedIndex = null; });
       container.appendChild(card);
     });
-    updateExportEstimate(overlay);
-    schedulePreview(overlay);
+    applySettings(overlay);
   }
 
   function moveBook(from, to, overlay) {
@@ -1458,7 +1246,8 @@
     const naturalHeight = hasShelf
       ? contentTop + rows * (cellHeight + shelfSpace) + paddingBottom
       : contentTop + rows * cellHeight + Math.max(0, rows - 1) * effectiveGap + paddingBottom;
-    const height = forcedHeight || naturalHeight;
+    const height = forcedHeight || (settings.pageFormat === "xhs"
+      ? Math.max(naturalHeight, Math.round(width * 1.25)) : naturalHeight);
 
     return {
       width,
@@ -1496,6 +1285,24 @@
     const requestedCapacity = normalizeSetting('booksPerPage', settings.booksPerPage) || Infinity;
 
     const fullLayout = calculateLayout(itemCount, settings);
+    if (settings.pageFormat === "xhs") {
+      const maxHeight = Math.round(fullLayout.width * 2);
+      const totalRows = Math.ceil(itemCount / fullLayout.columns);
+      let rowsPerPage = 0;
+      while (rowsPerPage < totalRows) {
+        const candidate = calculateLayout((rowsPerPage + 1) * fullLayout.columns, settings);
+        if (candidate.height > maxHeight || !isLayoutSafe(candidate)) break;
+        rowsPerPage += 1;
+      }
+      if (rowsPerPage === 0) return { pageCounts: [itemCount], layouts: [fullLayout], safe: false };
+      const pageCapacity = Math.min(rowsPerPage * fullLayout.columns, requestedCapacity);
+      const pageCounts = [];
+      for (let offset = 0; offset < itemCount; offset += pageCapacity) {
+        pageCounts.push(Math.min(pageCapacity, itemCount - offset));
+      }
+      const layouts = pageCounts.map(count => calculateLayout(count, settings));
+      return { pageCounts, layouts, safe: layouts.every(layout => isLayoutSafe(layout) && layout.height <= maxHeight) };
+    }
     const fixedHeight = getFixedPageHeight(settings);
     if (fixedHeight) {
       let rowsPerPage = 0;
@@ -1550,50 +1357,15 @@
   }
 
   function updateExportEstimate(overlay) {
-    const recommendation = getRecommendation();
-    const advice = overlay.querySelector('#dcw-layout-advice');
-    if (advice) advice.textContent = recommendation
-      ? `建议 ${recommendation.columns} 列 · 每页最多 ${recommendation.booksPerPage} 部 · 共 ${recommendation.pages} 页（按当前画幅与样式）`
-      : '选择作品后提供排版建议；每页数量填 0 表示按画幅自动计算。';
-    const recommendButton=overlay.querySelector('[data-action="recommend-layout"]');
-    if (recommendButton) recommendButton.disabled=!recommendation;
-    const estimate = overlay.querySelector("#dcw-export-estimate");
-    if (!estimate) return;
-    const count = state.books.filter((book) => book.included).length;
-    estimate.dataset.kind = "normal";
-
-    if (count === 0) {
-      estimate.textContent = state.loaded ? "请先选择要导出的作品" : "读取作品后显示预计导出尺寸";
-      return;
-    }
-
-    const plan = buildExportPlan(count, state.settings);
-    const fullLayout = calculateLayout(count, state.settings);
-    const fixedHeight = getFixedPageHeight(state.settings);
-    if (fixedHeight) {
-      if (!plan.safe) {
-        estimate.textContent = "当前画幅放不下一行封面，请增加列数、减少边距或关闭标题";
-        estimate.dataset.kind = "warning";
-      } else {
-        estimate.textContent = `预计 ${fullLayout.width} × ${fixedHeight} px · ${plan.pageCounts.length} 张 PNG`;
-      }
-      return;
-    }
-
-    if (state.settings.exportMode === "single") {
-      estimate.textContent = `预计 ${fullLayout.width} × ${fullLayout.height} px · 1 张 PNG${plan.safe ? "" : " · 尺寸过大"}`;
-      if (!plan.safe) estimate.dataset.kind = "warning";
-      return;
-    }
-
-    if (plan.pageCounts.length === 1) {
-      estimate.textContent = `预计 ${plan.layouts[0].width} × ${plan.layouts[0].height} px · 1 张 PNG`;
-    } else {
-      const tallest = Math.max(...plan.layouts.map((layout) => layout.height));
-      estimate.textContent = `预计自动拆分 ${plan.pageCounts.length} 张 PNG · 每张不超过 ${plan.layouts[0].width} × ${tallest} px`;
-    }
+    const count=state.books.filter(book=>book.included).length,estimate=overlay.querySelector('#dcw-export-estimate');
+    if(!count){estimate.textContent='添加作品，即可生成图片';return;}
+    const plan=buildExportPlan(count,state.settings),preset=DCWWorkspace.SHARE_PRESETS[state.settings.sharePreset];
+    const heights=plan.layouts.map(layout=>layout.height);
+    const heightLabel=state.settings.sharePreset==='xiaohongshu' && Math.min(...heights)!==Math.max(...heights)
+      ? `${Math.min(...heights)}–${Math.max(...heights)}` : String(heights[0]);
+    estimate.textContent=`${preset.width} × ${heightLabel} · ${plan.pageCounts.length} 张图片${state.settings.sharePreset==='x' && plan.pageCounts.length>4 ? ' · X 请分批发布' : ''}`;
+    estimate.dataset.kind=plan.safe?'normal':'warning';
   }
-
   async function exportWall(overlay) {
     if (state.exportJob) return;
 
@@ -1712,7 +1484,7 @@
     const exportButton = overlay.querySelector('[data-action="export"]');
     const cancelButton = overlay.querySelector('[data-action="cancel-export"]');
     exportButton.disabled = exporting;
-    exportButton.textContent = exporting ? "正在生成…" : "导出 PNG";
+    exportButton.textContent = exporting ? "正在生成…" : "导出图片";
     cancelButton.hidden = !exporting;
     cancelButton.disabled = false;
     cancelButton.textContent = "取消生成";
@@ -2128,10 +1900,20 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  function readPageTitle() {
-    const heading = document.querySelector("#content h1 .subject-name, #content h1 span, #content h1")
+  function readPageTitle(sourceMode = "recommended") {
+    const heading = document.querySelector(IS_FIVEBOOKS
+      ? ".page-content.people h1, main h1, h1"
+      : "#content h1 .subject-name, #content h1 span, #content h1")
       ?.textContent.trim();
     if (!heading) return PAGE_COPY.fallbackTitle;
+    if (IS_FIVEBOOKS) {
+      if (sourceMode.startsWith("interview:")) {
+        return fiveBooksInterviewInfo(fiveBooksInterview(sourceMode)).title;
+      }
+      if (PAGE_KIND === "fivebooks-archive") return `${heading} 推荐书单`;
+      const name = heading.replace(/^Books by\s+/i, "").trim();
+      return name ? `${name} ${FIVEBOOKS_SOURCES[sourceMode].titleSuffix}` : PAGE_COPY.fallbackTitle;
+    }
     return PAGE_KIND === "author"
       ? heading.replace(/\s*的全部作品\s*[（(]\d+[）)]\s*$/, "").trim() || heading
       : heading;

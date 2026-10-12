@@ -1,13 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "豆瓣封面墙",
-  "version": "1.8.0",
-  "description": "把豆瓣豆列或作者全部作品排成封面墙或主题书架，并导出为 PNG。",
+  "name": "书单图片",
+  "version": "2.0.0",
+  "description": "把豆瓣、Five Books 和自选书单制作成适合小红书与 X 分享的图片。",
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  },
   "permissions": ["storage", "declarativeNetRequestWithHostAccess"],
   "host_permissions": [
     "https://www.douban.com/*",
     "https://book.douban.com/*",
-    "https://*.doubanio.com/*"
+    "https://*.doubanio.com/*",
+    "https://fivebooks.com/*",
+    "https://www.fivebooks.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -22,13 +30,23 @@
     ]
   },
   "action": {
-    "default_title": "生成豆瓣封面墙"
+    "default_title": "制作书单图片",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "32": "assets/icons/icon-32.png"
+    }
   },
   "content_scripts": [
     {
       "matches": [
         "https://www.douban.com/doulist/*",
-        "https://www.douban.com/personage/*/creations*"
+        "https://www.douban.com/personage/*/creations*",
+        "https://fivebooks.com/people/*",
+        "https://www.fivebooks.com/people/*",
+        "https://fivebooks.com/category/*",
+        "https://www.fivebooks.com/category/*",
+        "https://fivebooks.com/books/*",
+        "https://www.fivebooks.com/books/*"
       ],
       "css": ["content.css"],
       "js": ["workspace-core.js", "content.js"],
